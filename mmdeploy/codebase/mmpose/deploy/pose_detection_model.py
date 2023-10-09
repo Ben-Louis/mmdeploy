@@ -98,7 +98,7 @@ class End2EndModel(BaseBackendModel):
         inputs = inputs.contiguous().to(self.device)
         batch_outputs = self.wrapper({self.input_name: inputs})
         batch_outputs = self.wrapper.output_to_list(batch_outputs)
-        if self.model_cfg.model.type == 'YOLODetector':
+        if self.model_cfg.model.type == 'BottomupPoseEstimator':
             return self.pack_yolox_pose_result(batch_outputs, data_samples)
 
         codec = self.model_cfg.codec
@@ -170,9 +170,9 @@ class End2EndModel(BaseBackendModel):
             data_samples (List[BaseDataElement]): A list of meta info for
                 image(s).
         Returns:
-            data_samples (List[BaseDataElement])：
+            data_samples (List[BaseDataElement]):
                 updated data_samples with predictions.
-        """
+        """        
         assert preds[0].shape[0] == len(data_samples)
         batched_dets, batched_kpts = preds
         for data_sample_idx, data_sample in enumerate(data_samples):
@@ -190,10 +190,22 @@ class End2EndModel(BaseBackendModel):
 
             pred_instances = InstanceData()
             # rescale
-            scale_factor = data_sample.scale_factor
-            scale_factor = keypoints.new_tensor(scale_factor)
-            keypoints /= keypoints.new_tensor(scale_factor).reshape(1, 1, 2)
-            bboxes /= keypoints.new_tensor(scale_factor).repeat(1, 2)
+            # scale_factor = data_sample.scale_factor
+            
+            input_size = data_sample.metainfo['input_size']
+            input_center = data_sample.metainfo['input_center']
+            input_scale = data_sample.metainfo['input_scale']
+                        
+            rescale = keypoints.new_tensor(input_scale) / keypoints.new_tensor(input_size)
+            translation = keypoints.new_tensor(input_center) - 0.5 * keypoints.new_tensor(input_scale)
+            
+            # print('onnx', rescale)
+            # print('onnx', translation)
+            # print('onnx', keypoints)
+            # print('onnx', bboxes)
+            
+            keypoints = keypoints * rescale.reshape(1, 1, 2) + translation.reshape(1, 1, 2)
+            bboxes = bboxes * rescale.repeat(1, 2) + translation.repeat(1, 2)
             pred_instances.bboxes = bboxes.cpu().numpy()
             pred_instances.bbox_scores = bbox_scores
             # the precision test requires keypoints to be np.ndarray

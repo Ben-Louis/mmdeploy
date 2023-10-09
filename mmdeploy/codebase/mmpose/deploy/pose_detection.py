@@ -34,6 +34,8 @@ def process_model_config(
         mmengine.Config: the model config after processing.
     """
     cfg = copy.deepcopy(model_cfg)
+    cfg.model.switch_to_deploy = True
+    model_cfg.model.switch_to_deploy = True
     test_pipeline = cfg.test_dataloader.dataset.pipeline
     data_preprocessor = cfg.model.data_preprocessor
     codec = cfg.codec
@@ -43,6 +45,7 @@ def process_model_config(
     test_pipeline[0] = dict(type='LoadImageFromFile')
     for i in reversed(range(len(test_pipeline))):
         trans = test_pipeline[i]
+        print(trans['type'], end='->')
         if trans['type'] == 'PackPoseInputs':
             test_pipeline.pop(i)
         elif trans['type'] == 'GetBBoxCenterScale':
@@ -53,13 +56,18 @@ def process_model_config(
             trans['type'] = 'TopDownAffine'
             trans['image_size'] = input_size
             trans.pop('input_size')
+        elif trans['type'] == 'BottomupResize':
+            trans['type'] = 'BottomUpAffine'
+            trans['image_size'] = input_size
+            trans.pop('input_size')  
+        print(trans['type'])          
 
     test_pipeline.append(
         dict(
             type='Normalize',
-            mean=data_preprocessor.mean,
-            std=data_preprocessor.std,
-            to_rgb=data_preprocessor.bgr_to_rgb))
+            mean=data_preprocessor.get('mean', [0, 0, 0]),
+            std=data_preprocessor.get('std', [1, 1, 1]),
+            to_rgb=data_preprocessor.get('bgr_to_rgb', False)))
     test_pipeline.append(dict(type='ImageToTensor', keys=['img']))
     test_pipeline.append(
         dict(
@@ -67,7 +75,7 @@ def process_model_config(
             keys=['img'],
             meta_keys=[
                 'img_shape', 'pad_shape', 'ori_shape', 'img_norm_cfg',
-                'scale_factor', 'bbox_score', 'center', 'scale'
+                'scale_factor', 'bbox_score', 'center', 'scale',
             ]))
 
     cfg.test_dataloader.dataset.pipeline = test_pipeline
@@ -149,6 +157,7 @@ class PoseDetection(BaseTask):
                  device: str):
         super().__init__(model_cfg, deploy_cfg, device)
         self.model_cfg.model.test_cfg['flip_test'] = False
+        self.model_cfg.model.switch_to_deploy = True
 
     def build_backend_model(
             self,
